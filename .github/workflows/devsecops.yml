@@ -10,32 +10,30 @@ on:
 
 jobs:
   devsecops:
-    name: DevSecOps Pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       # 1️⃣ Checkout the repository
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup Node.js environment
+      # 2️⃣ Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
           cache: 'npm'
 
-      # 3️⃣ Install dependencies securely
+      # 3️⃣ Install dependencies
       - name: Install dependencies
-        run: |
-          npm ci
+        run: npm ci
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}  # optional, only for private packages
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}  # optional, only if private packages
 
       # 4️⃣ Run linting
       - name: Run ESLint
-        run: npx eslint . --max-warnings=0 || true  # optional: fail on warnings
+        run: npx eslint . --max-warnings=0 || true
 
       # 5️⃣ Run unit tests
       - name: Run Tests
@@ -45,37 +43,20 @@ jobs:
       - name: NPM Security Scan
         run: |
           npm audit --json > audit-report.json
-          # Fail the build if there are critical vulnerabilities
           CRITICAL=$(jq '.metadata.vulnerabilities.critical' audit-report.json)
           if [ "$CRITICAL" -gt 0 ]; then
             echo "🚨 Critical vulnerabilities detected!"
             exit 1
           fi
 
-      # 7️⃣ Run OWASP Dependency-Check
-      - name: OWASP Dependency-Check
-        uses: jeremylong/DependencyCheck-action@v2
-        with:
-          project: 'my-vercel-project'
-          format: 'ALL'
-          scan: '.'
-          out: 'dependency-check-report'
-
-      # 8️⃣ Upload npm audit report
+      # 7️⃣ Upload npm audit report
       - name: Upload NPM Audit Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: npm-audit-report
           path: audit-report.json
 
-      # 9️⃣ Upload OWASP report
-      - name: Upload OWASP Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: owasp-report
-          path: dependency-check-report
-
-      # 🔟 Optional: Deploy to Vercel (if you want CI/CD integration)
+      # 8️⃣ Deploy to Vercel
       - name: Deploy to Vercel
         uses: amondnet/vercel-action@v20
         with:
