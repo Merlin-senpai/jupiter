@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      # 1️⃣ Checkout the repository
+      # 1️⃣ Checkout repository
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -29,32 +29,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}  # optional, only if private packages
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}  # optional for private packages
 
       # 4️⃣ Run linting
       - name: Run ESLint
         run: npx eslint . --max-warnings=0 || true
 
-      # 5️⃣ Run unit tests
+      # 5️⃣ Run tests
       - name: Run Tests
         run: npm test
 
-      # 6️⃣ Run npm audit for security vulnerabilities
-      - name: NPM Security Scan
+      # 6️⃣ Generate human-readable npm audit report
+      - name: Generate HTML Audit Report
         run: |
-          npm audit --json > audit-report.json
-          CRITICAL=$(jq '.metadata.vulnerabilities.critical' audit-report.json)
+          npm install -g npm-audit-html
+          npm audit --json > audit.json
+          npm-audit-html -i audit.json -o audit-report.html
+          CRITICAL=$(jq '.metadata.vulnerabilities.critical' audit.json)
           if [ "$CRITICAL" -gt 0 ]; then
             echo "🚨 Critical vulnerabilities detected!"
             exit 1
           fi
 
-      # 7️⃣ Upload npm audit report
-      - name: Upload NPM Audit Report
+      # 7️⃣ Upload HTML report
+      - name: Upload Human-Readable Audit Report
         uses: actions/upload-artifact@v4
         with:
-          name: npm-audit-report
-          path: audit-report.json
+          name: npm-audit-html-report
+          path: audit-report.html
 
       # 8️⃣ Deploy to Vercel
       - name: Deploy to Vercel
