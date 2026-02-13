@@ -1,4 +1,4 @@
-name: DevSecOps Security Pipeline
+name: DevSecOps Security & Deployment Pipeline
 
 on:
   push:
@@ -7,14 +7,12 @@ on:
   pull_request:
     branches:
       - main
-  schedule:
-    - cron: '0 3 * * 1'  # Weekly scan every Monday at 03:00 UTC
 
 jobs:
-  security-scan:
-    name: Security & Quality Scan
+  security-and-deploy:
+    name: Security Scan + Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       # 1️⃣ Checkout repository
@@ -32,31 +30,40 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 4️⃣ Run ESLint (Next.js built-in lint)
+      # 4️⃣ Run lint
       - name: Run Lint
         run: npm run lint || true
 
-      # 5️⃣ Run tests (if configured)
+      # 5️⃣ Run tests
       - name: Run Tests
         run: npm test || true
 
-      # 6️⃣ Generate human-readable security report
+      # 6️⃣ Generate Human-Readable Security Report
       - name: Generate HTML Security Report
         run: |
           npm install -g npm-audit-html
           npm audit --json > audit.json
           npm-audit-html -i audit.json -o security-report.html
 
-          # Fail pipeline if critical vulnerabilities exist
           CRITICAL=$(jq '.metadata.vulnerabilities.critical' audit.json)
           if [ "$CRITICAL" -gt 0 ]; then
             echo "🚨 Critical vulnerabilities detected!"
             exit 1
           fi
 
-      # 7️⃣ Upload HTML report
+      # 7️⃣ Upload Security Report
       - name: Upload Security Report
         uses: actions/upload-artifact@v4
         with:
           name: security-report
           path: security-report.html
+
+      # 8️⃣ Deploy to Vercel (ONLY if everything above passed)
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.vcp_1rvS2FxWmynMBwmjND7y6n0JR6x6rFLNzlGPRgvpSY7naqKWZd3qOIT8 }}
+          vercel-org-id: ${{ secrets.ls-projects-33dcbaf7 }}
+          vercel-project-id: ${{ secrets.prj_NT3w3NZuSQA3NiImCVrGnyTNtdFs }}
+          working-directory: ./
+          prod: true
