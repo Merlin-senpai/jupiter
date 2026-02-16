@@ -53,8 +53,8 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
-          snyk test --json > snyk-report.json  true
-          snyk test  true
+          snyk test --json > snyk-report.json || true
+          snyk test || true
 
       # 7️⃣ Upload Security Report
       - name: Upload Security Report
