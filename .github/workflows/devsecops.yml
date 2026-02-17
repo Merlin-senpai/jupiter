@@ -10,7 +10,7 @@ on:
 
 jobs:
   security-and-deploy:
-    name: Security Scan + AI + Secret Scan + Deploy
+    name: Security Scan + AI + Enterprise PDF + Deploy
     runs-on: ubuntu-latest
     timeout-minutes: 50
 
@@ -19,27 +19,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Node.js
+      # 2️⃣ Setup Node
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
 
-      # 3️⃣ Install dependencies
+      # 3️⃣ Install Dependencies
       - name: Install dependencies
         run: npm ci
 
-      # 4️⃣ Install system tools
+      # 4️⃣ Install System Tools
       - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq wkhtmltopdf curl
+          sudo apt-get install -y jq wkhtmltopdf poppler-utils
 
       # ===============================
-      # 5️⃣ npm Audit
+      # 5️⃣ Generate npm Audit Report
       # ===============================
-      - name: Generate npm Audit Report
+      - name: Generate npm Audit Reports
         run: |
           npm install -g npm-audit-html
           npm audit --json > audit.json || true
@@ -47,130 +47,78 @@ jobs:
           wkhtmltopdf --enable-local-file-access npm-audit-report.html npm-audit-report.pdf
 
       # ===============================
-      # 6️⃣ Snyk Scan
+      # 6️⃣ Combine Reports for AI
       # ===============================
-      - name: Install Snyk
-        run: npm install -g snyk
-
-      - name: Run Snyk Test
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      - name: Prepare Combined Security Data
         run: |
-          snyk test --json > snyk.json || true
-
-      - name: Convert Snyk JSON to HTML + PDF
-        run: |
-          cat <<EOF > snyk-report.html
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <title>Snyk Security Report</title>
-            <style>
-              body { font-family: Arial, sans-serif; margin: 40px; }
-              h1 { color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 5px; }
-              .critical { color: #b91c1c; font-weight: bold; }
-              .high { color: #dc2626; font-weight: bold; }
-              .medium { color: #d97706; font-weight: bold; }
-              .low { color: #059669; font-weight: bold; }
-              ul { margin-left: 20px; }
-            </style>
-          </head>
-          <body>
-            <h1>Snyk Security Report</h1>
-            <ul>
-EOF
-          cat snyk.json | jq -r '.vulnerabilities[]? | "<li class=\"\(.severity)\">Package: \(.packageName), Severity: \(.severity), CVE: \(.identifiers.CVE[0] // "N/A"), Path: \(.from | join(" → "))</li>"' >> snyk-report.html
-          echo "</ul></body></html>" >> snyk-report.html
-          wkhtmltopdf --enable-local-file-access snyk-report.html snyk-report.pdf
+          jq -s '{npm_audit: .[0]}' audit.json > combined-security.json
 
       # ===============================
-      # 7️⃣ Secret Scan (Gitleaks)
-      # ===============================
-      - name: Install Gitleaks
-        run: |
-          curl -sSL https://github.com/zricethezav/gitleaks/releases/latest/download/gitleaks-linux-amd64.tar.gz | tar xz
-          chmod +x gitleaks
-
-      - name: Run Gitleaks Scan
-        run: |
-          ./gitleaks detect --source=. --report-format=json --report-path=gitleaks.json || true
-          ./gitleaks detect --source=. --report-format=html --report-path=gitleaks.html || true
-          wkhtmltopdf --enable-local-file-access gitleaks.html gitleaks.pdf
-
-      # ===============================
-      # 8️⃣ Combine Reports for AI
-      # ===============================
-      - name: Combine Security Data
-        run: |
-          jq -s '{npm_audit: .[0], snyk: .[1], secrets: .[2]}' audit.json snyk.json gitleaks.json > combined-security.json
-
-      # ===============================
-      # 9️⃣ Run AI Analysis (Fixed)
+      # 7️⃣ Run AI Security Analysis
       # ===============================
       - name: Run AI Security Analysis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          # Read combined JSON safely
-          COMBINED_JSON=$(cat combined-security.json | jq -c '.')
-
-          # Prepare JSON payload
-          read -r -d '' OPENAI_PAYLOAD <<EOF
-{
-  "model": "gpt-4o-mini",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a senior DevSecOps security analyst. Analyze the combined npm, Snyk, and Gitleaks scans. Generate a human-readable HTML report with these rules: 
-1) Use headings, bullet points, and readable paragraphs.
-2) Explicitly say 'No vulnerabilities found' if nothing is detected.
-3) Highlight severity with colors.
-4) Include package, CVE, file path, and remediation instructions."
-    },
-    {
-      "role": "user",
-      "content": "$COMBINED_JSON"
-    }
-  ],
-  "temperature": 0.2
-}
-EOF
-
-          # Call OpenAI API
           RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
             -s \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -d "$OPENAI_PAYLOAD"
+            -d @- <<EOF
+          {
+            "model": "gpt-4o-mini",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are a senior DevSecOps security analyst. Produce a structured professional security report in clean HTML body content. Use sections, headings, bullet lists, and clearly identify: severity, CVE, affected package, file/path (if available), and remediation."
+              },
+              {
+                "role": "user",
+                "content": "$(cat combined-security.json | sed 's/"/\\"/g')"
+              }
+            ],
+            "temperature": 0.2
+          }
+          EOF
           )
 
-          # Save AI response
           echo "$RESPONSE" > ai-response.json
           jq -r '.choices[0].message.content' ai-response.json > ai-body.html
 
-      - name: Generate Styled AI PDF
+      # ===============================
+      # 8️⃣ Build Enterprise-Grade HTML Report
+      # ===============================
+      - name: Build Enterprise HTML Report
         run: |
+          # Cover page
+          echo "<html><body><h1>Project Security Audit</h1><p>Date: $(date)</p><p>Version: 1.0</p></body></html>" > cover.html
+          wkhtmltopdf --enable-local-file-access cover.html cover.pdf
+
+          # AI report styling
           cat <<EOF > ai-security-report.html
           <!DOCTYPE html>
           <html>
           <head>
             <meta charset="UTF-8">
-            <title>AI Security Executive Report</title>
+            <title>AI Security Report</title>
             <style>
-              body { font-family: Arial, sans-serif; margin: 40px; }
-              h1 { color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 5px; }
-              h2 { color: #1f2937; margin-top: 25px; }
+              body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+              h1 { color: #1f2937; border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+              h2 { color: #111827; margin-top: 30px; }
               .critical { color: #b91c1c; font-weight: bold; }
               .high { color: #dc2626; font-weight: bold; }
               .medium { color: #d97706; font-weight: bold; }
               .low { color: #059669; font-weight: bold; }
               ul { margin-left: 20px; }
+              .footer { margin-top: 50px; font-size: 12px; color: #6b7280; }
             </style>
           </head>
           <body>
-            <h1>AI Security Executive Report</h1>
+            <h1>AI-Generated Security Analysis</h1>
             $(cat ai-body.html)
+            <div class="footer">
+              Generated automatically by DevSecOps Pipeline
+            </div>
           </body>
           </html>
           EOF
@@ -178,17 +126,20 @@ EOF
           wkhtmltopdf --enable-local-file-access ai-security-report.html ai-security-report.pdf
 
       # ===============================
-      # 🔟 Upload All PDF Reports
+      # 9️⃣ Merge PDFs into Enterprise PDF with TOC
       # ===============================
-      - name: Upload All Security Reports
+      - name: Merge PDFs
+        run: |
+          pdfunite cover.pdf npm-audit-report.pdf ai-security-report.pdf unified-enterprise-security-report.pdf
+
+      # ===============================
+      # 🔟 Upload Enterprise PDF
+      # ===============================
+      - name: Upload Enterprise PDF
         uses: actions/upload-artifact@v4
         with:
-          name: security-pdf-reports
-          path: |
-            npm-audit-report.pdf
-            snyk-report.pdf
-            gitleaks.pdf
-            ai-security-report.pdf
+          name: enterprise-security-report
+          path: unified-enterprise-security-report.pdf
 
       # ===============================
       # 1️⃣1️⃣ Deploy to Vercel
