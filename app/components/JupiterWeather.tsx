@@ -67,7 +67,7 @@ export default function JupiterWeather() {
     <div className="min-h-screen bg-gradient-to-b from-space-dark to-space-blue text-white py-20 px-4">
       <div className="max-w-6xl mx-auto">
         <h2 className="text-4xl md:text-5xl font-bold text-center mb-16 bg-gradient-to-r from-blue-300 to-purple-400 bg-clip-text text-transparent">
-          Jupiter\'s Weather & Atmosphere
+          Jupiter's Weather & Atmosphere
         </h2>
 
         <div className="grid lg:grid-cols-2 gap-12 mb-16">
