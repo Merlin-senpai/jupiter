@@ -12,43 +12,39 @@ jobs:
   security-and-deploy:
     name: Security Scan + AI Analysis + Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
-      # 1️⃣ Checkout repository
+      # 1️⃣ Checkout
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Node.js
+      # 2️⃣ Setup Node
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
 
-      # 3️⃣ Install dependencies
+      # 3️⃣ Install Dependencies
       - name: Install dependencies
         run: npm ci
 
-      # 4️⃣ Install required system tools
+      # 4️⃣ Install System Tools
       - name: Install system tools
         run: |
           sudo apt-get update
           sudo apt-get install -y jq wkhtmltopdf
 
-      # 5️⃣ Generate npm audit (JSON + HTML)
+      # 5️⃣ Generate Styled npm Audit Report
       - name: Generate npm Audit Reports
         run: |
           npm install -g npm-audit-html
           npm audit --json > audit.json || true
           npm-audit-html -i audit.json -o npm-audit-report.html
+          wkhtmltopdf --enable-local-file-access npm-audit-report.html npm-audit-report.pdf
 
-      # Convert npm HTML to PDF
-      - name: Convert npm report to PDF
-        run: |
-          wkhtmltopdf npm-audit-report.html npm-audit-report.pdf
-
-      # 6️⃣ Install and run Snyk
+      # 6️⃣ Install & Run Snyk
       - name: Install Snyk
         run: npm install -g snyk
 
@@ -57,22 +53,13 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
           snyk test --json > snyk-report.json || true
-          snyk test --severity-threshold=low > snyk-readable.txt || true
 
-      # Convert Snyk text output to PDF
-      - name: Convert Snyk report to PDF
-        run: |
-          echo "<pre>" > snyk-report.html
-          cat snyk-readable.txt >> snyk-report.html
-          echo "</pre>" >> snyk-report.html
-          wkhtmltopdf snyk-report.html snyk-report.pdf
-
-      # 7️⃣ Combine Security Data for AI
+      # 7️⃣ Combine Reports for AI
       - name: Prepare Combined Security Data
         run: |
           jq -s '{npm_audit: .[0], snyk: .[1]}' audit.json snyk-report.json > combined-security.json
 
-      # 8️⃣ Run AI Security Analysis
+      # 8️⃣ Run AI Analysis
       - name: Run AI Security Analysis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -87,7 +74,7 @@ jobs:
             "messages": [
               {
                 "role": "system",
-                "content": "You are a senior DevSecOps security analyst. Analyze the provided scan results and generate a professional structured security report in clear Markdown format. Include file names, affected packages, severity levels, CVE identifiers (if present), and remediation steps. Provide precise technical details."
+                "content": "You are a senior DevSecOps security analyst. Produce a structured professional security report in clean HTML body content (not full HTML document). Use sections, headings, bullet lists, and clearly identify: severity, CVE, affected package, file/path (if available), and remediation."
               },
               {
                 "role": "user",
@@ -100,29 +87,79 @@ jobs:
           )
 
           echo "$RESPONSE" > ai-response.json
-          jq -r '.choices[0].message.content' ai-response.json > ai-report.md
+          jq -r '.choices[0].message.content' ai-response.json > ai-body.html
 
-      # Convert AI Markdown to PDF
+      # 9️⃣ Generate Styled AI HTML Report
+      - name: Build Styled AI HTML Report
+        run: |
+          cat <<EOF > ai-security-report.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>AI Security Report</title>
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                margin: 40px;
+                color: #333;
+              }
+              h1 {
+                color: #1f2937;
+                border-bottom: 3px solid #2563eb;
+                padding-bottom: 10px;
+              }
+              h2 {
+                color: #111827;
+                margin-top: 30px;
+              }
+              .critical { color: #b91c1c; font-weight: bold; }
+              .high { color: #dc2626; font-weight: bold; }
+              .medium { color: #d97706; font-weight: bold; }
+              .low { color: #059669; font-weight: bold; }
+              ul {
+                margin-left: 20px;
+              }
+              .section {
+                margin-bottom: 25px;
+              }
+              .footer {
+                margin-top: 50px;
+                font-size: 12px;
+                color: #6b7280;
+              }
+            </style>
+          </head>
+          <body>
+            <h1>AI-Generated Security Analysis Report</h1>
+            <div class="section">
+              $(cat ai-body.html)
+            </div>
+            <div class="footer">
+              Generated automatically by DevSecOps AI Pipeline
+            </div>
+          </body>
+          </html>
+          EOF
+
+      # Convert AI HTML to PDF
       - name: Convert AI Report to PDF
         run: |
-          echo "<pre>" > ai-report.html
-          cat ai-report.md >> ai-report.html
-          echo "</pre>" >> ai-report.html
-          wkhtmltopdf ai-report.html ai-security-report.pdf
+          wkhtmltopdf --enable-local-file-access ai-security-report.html ai-security-report.pdf
 
-      # 9️⃣ Upload All PDF Reports
+      # 🔟 Upload Styled PDF Reports
       - name: Upload Security PDF Reports
         uses: actions/upload-artifact@v4
         with:
-          name: security-pdf-reports
+          name: styled-security-reports
           path: |
             npm-audit-report.pdf
-            snyk-report.pdf
             ai-security-report.pdf
 
-      # 🔟 Deploy to Vercel
+      # 1️⃣1️⃣ Deploy to Vercel
       - name: 🚀 Deploy to Vercel
         if: github.ref == 'refs/heads/main'
         run: |
           npm install -g vercel
           vercel --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
+
