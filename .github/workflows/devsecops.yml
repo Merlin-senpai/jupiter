@@ -12,7 +12,7 @@ jobs:
   security-and-deploy:
     name: Security Scan + AI Analysis + Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       # 1️⃣ Checkout repository
@@ -30,18 +30,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 4️⃣ Install system tools (jq)
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      # 4️⃣ Install required system tools
+      - name: Install system tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq wkhtmltopdf
 
-      # 5️⃣ Generate npm Audit Reports (JSON + HTML)
+      # 5️⃣ Generate npm audit (JSON + HTML)
       - name: Generate npm Audit Reports
         run: |
           npm install -g npm-audit-html
           npm audit --json > audit.json || true
-          npm-audit-html -i audit.json -o security-report.html
+          npm-audit-html -i audit.json -o npm-audit-report.html
 
-      # 6️⃣ Install and Run Snyk
+      # Convert npm HTML to PDF
+      - name: Convert npm report to PDF
+        run: |
+          wkhtmltopdf npm-audit-report.html npm-audit-report.pdf
+
+      # 6️⃣ Install and run Snyk
       - name: Install Snyk
         run: npm install -g snyk
 
@@ -50,13 +57,22 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
           snyk test --json > snyk-report.json || true
+          snyk test --severity-threshold=low > snyk-readable.txt || true
 
-      # 7️⃣ Combine Security Reports for AI (Fixed jq)
+      # Convert Snyk text output to PDF
+      - name: Convert Snyk report to PDF
+        run: |
+          echo "<pre>" > snyk-report.html
+          cat snyk-readable.txt >> snyk-report.html
+          echo "</pre>" >> snyk-report.html
+          wkhtmltopdf snyk-report.html snyk-report.pdf
+
+      # 7️⃣ Combine Security Data for AI
       - name: Prepare Combined Security Data
         run: |
           jq -s '{npm_audit: .[0], snyk: .[1]}' audit.json snyk-report.json > combined-security.json
 
-      # 8️⃣ 🤖 AI Security Analysis (Markdown formatted)
+      # 8️⃣ Run AI Security Analysis
       - name: Run AI Security Analysis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -71,7 +87,7 @@ jobs:
             "messages": [
               {
                 "role": "system",
-                "content": "You are a senior DevSecOps security analyst. Analyze the provided security scan results and produce a professional Markdown formatted security report. Use headings (##), bullet points, and concise explanations. Include: Executive Summary, Overall Risk Level, Top Vulnerabilities, Remediation Plan, and Deployment Recommendation. Do NOT return JSON."
+                "content": "You are a senior DevSecOps security analyst. Analyze the provided scan results and generate a professional structured security report in clear Markdown format. Include file names, affected packages, severity levels, CVE identifiers (if present), and remediation steps. Provide precise technical details."
               },
               {
                 "role": "user",
@@ -86,25 +102,25 @@ jobs:
           echo "$RESPONSE" > ai-response.json
           jq -r '.choices[0].message.content' ai-response.json > ai-report.md
 
-      # 9️⃣ Publish AI Security Report
-      - name: Publish AI Security Report
+      # Convert AI Markdown to PDF
+      - name: Convert AI Report to PDF
         run: |
-          echo "## 🤖 AI Security Analysis Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          cat ai-report.md >> $GITHUB_STEP_SUMMARY
+          echo "<pre>" > ai-report.html
+          cat ai-report.md >> ai-report.html
+          echo "</pre>" >> ai-report.html
+          wkhtmltopdf ai-report.html ai-security-report.pdf
 
-      # 🔟 Upload Reports
-      - name: Upload Security Artifacts
+      # 9️⃣ Upload All PDF Reports
+      - name: Upload Security PDF Reports
         uses: actions/upload-artifact@v4
         with:
-          name: security-reports
+          name: security-pdf-reports
           path: |
-            security-report.html
-            audit.json
-            snyk-report.json
-            ai-report.md
+            npm-audit-report.pdf
+            snyk-report.pdf
+            ai-security-report.pdf
 
-      # 1️⃣1️⃣ Deploy to Vercel
+      # 🔟 Deploy to Vercel
       - name: 🚀 Deploy to Vercel
         if: github.ref == 'refs/heads/main'
         run: |
