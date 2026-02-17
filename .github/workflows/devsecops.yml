@@ -19,14 +19,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Node
+      # 2️⃣ Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
 
-      # 3️⃣ Install project dependencies
+      # 3️⃣ Install dependencies
       - name: Install dependencies
         run: npm ci
 
@@ -34,7 +34,7 @@ jobs:
       - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq wkhtmltopdf
+          sudo apt-get install -y jq wkhtmltopdf curl
 
       # ===============================
       # 5️⃣ npm Audit
@@ -58,7 +58,7 @@ jobs:
         run: |
           snyk test --json > snyk.json || true
 
-      - name: Convert Snyk JSON to Styled HTML + PDF
+      - name: Convert Snyk JSON to HTML + PDF
         run: |
           cat <<EOF > snyk-report.html
           <!DOCTYPE html>
@@ -106,17 +106,17 @@ EOF
           jq -s '{npm_audit: .[0], snyk: .[1], secrets: .[2]}' audit.json snyk.json gitleaks.json > combined-security.json
 
       # ===============================
-      # 9️⃣ Run AI Analysis (Fixed YAML)
+      # 9️⃣ Run AI Analysis (Fixed)
       # ===============================
       - name: Run AI Security Analysis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
-            -s \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -d @- <<'EOF'
+          # Read combined JSON safely
+          COMBINED_JSON=$(cat combined-security.json | jq -c '.')
+
+          # Prepare JSON payload
+          read -r -d '' OPENAI_PAYLOAD <<EOF
 {
   "model": "gpt-4o-mini",
   "messages": [
@@ -130,17 +130,26 @@ EOF
     },
     {
       "role": "user",
-      "content": "$(cat combined-security.json | sed 's/"/\\"/g')"
+      "content": "$COMBINED_JSON"
     }
   ],
   "temperature": 0.2
 }
 EOF
+
+          # Call OpenAI API
+          RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
+            -s \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -d "$OPENAI_PAYLOAD"
           )
 
-          echo "$RESPONSE" > ai-body.html
+          # Save AI response
+          echo "$RESPONSE" > ai-response.json
+          jq -r '.choices[0].message.content' ai-response.json > ai-body.html
 
-      - name: Generate Styled AI HTML + PDF
+      - name: Generate Styled AI PDF
         run: |
           cat <<EOF > ai-security-report.html
           <!DOCTYPE html>
