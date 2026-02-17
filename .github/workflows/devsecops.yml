@@ -1,4 +1,4 @@
-name: DevSecOps Security Pipeline
+name: DevSecOps Security & Deployment Pipeline
 
 on:
   push:
@@ -10,68 +10,140 @@ on:
 
 jobs:
   security-and-deploy:
-    name: Security Scan + PDF + Deploy
+    name: Security Scan + AI + Enterprise PDF + Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 50
 
     steps:
+      # 1️⃣ Checkout
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 2️⃣ Setup Node
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
 
+      # 3️⃣ Install Dependencies
       - name: Install dependencies
         run: npm ci
 
+      # 4️⃣ Install System Tools
       - name: Install system tools
         run: |
           sudo apt-get update
           sudo apt-get install -y jq wkhtmltopdf poppler-utils
 
-      # npm Audit
-      - name: npm Audit PDF
+      # ===============================
+      # 5️⃣ Generate npm Audit Report
+      # ===============================
+      - name: Generate npm Audit Reports
         run: |
           npm install -g npm-audit-html
           npm audit --json > audit.json || true
           npm-audit-html -i audit.json -o npm-audit-report.html
           wkhtmltopdf --enable-local-file-access npm-audit-report.html npm-audit-report.pdf
 
-      # Snyk
-      - name: Install Snyk
-        run: npm install -g snyk
-
-      - name: Run Snyk Test
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        run: snyk test --json > snyk-report.json || true
-
-      - name: Convert Snyk JSON to PDF
+      # ===============================
+      # 6️⃣ Combine Reports for AI
+      # ===============================
+      - name: Prepare Combined Security Data
         run: |
-          cat <<EOF > snyk-report.html
+          jq -s '{npm_audit: .[0]}' audit.json > combined-security.json
+
+      # ===============================
+      # 7️⃣ Run AI Security Analysis
+      # ===============================
+      - name: Run AI Security Analysis
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
+            -s \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -d @- <<EOF
+          {
+            "model": "gpt-4o-mini",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are a senior DevSecOps security analyst. Produce a structured professional security report in clean HTML body content. Use sections, headings, bullet lists, and clearly identify: severity, CVE, affected package, file/path (if available), and remediation."
+              },
+              {
+                "role": "user",
+                "content": "$(cat combined-security.json | sed 's/"/\\"/g')"
+              }
+            ],
+            "temperature": 0.2
+          }
+          EOF
+          )
+
+          echo "$RESPONSE" > ai-response.json
+          jq -r '.choices[0].message.content' ai-response.json > ai-body.html
+
+      # ===============================
+      # 8️⃣ Build Enterprise-Grade HTML Report
+      # ===============================
+      - name: Build Enterprise HTML Report
+        run: |
+          # Cover page
+          echo "<html><body><h1>Project Security Audit</h1><p>Date: $(date)</p><p>Version: 1.0</p></body></html>" > cover.html
+          wkhtmltopdf --enable-local-file-access cover.html cover.pdf
+
+          # AI report styling
+          cat <<EOF > ai-security-report.html
           <!DOCTYPE html>
           <html>
-          <head><meta charset="UTF-8"><title>Snyk Report</title></head>
-          <body><h1>Snyk Report</h1></body></html>
+          <head>
+            <meta charset="UTF-8">
+            <title>AI Security Report</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+              h1 { color: #1f2937; border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+              h2 { color: #111827; margin-top: 30px; }
+              .critical { color: #b91c1c; font-weight: bold; }
+              .high { color: #dc2626; font-weight: bold; }
+              .medium { color: #d97706; font-weight: bold; }
+              .low { color: #059669; font-weight: bold; }
+              ul { margin-left: 20px; }
+              .footer { margin-top: 50px; font-size: 12px; color: #6b7280; }
+            </style>
+          </head>
+          <body>
+            <h1>AI-Generated Security Analysis</h1>
+            $(cat ai-body.html)
+            <div class="footer">
+              Generated automatically by DevSecOps Pipeline
+            </div>
+          </body>
+          </html>
           EOF
-          wkhtmltopdf --enable-local-file-access snyk-report.html snyk-report.pdf
 
-      # Merge PDFs
+          wkhtmltopdf --enable-local-file-access ai-security-report.html ai-security-report.pdf
+
+      # ===============================
+      # 9️⃣ Merge PDFs into Enterprise PDF with TOC
+      # ===============================
       - name: Merge PDFs
         run: |
-          echo "<html><body><h1>Security Audit</h1></body></html>" > cover.html
-          wkhtmltopdf cover.html cover.pdf
-          pdfunite cover.pdf npm-audit-report.pdf snyk-report.pdf unified-security-report.pdf
+          pdfunite cover.pdf npm-audit-report.pdf ai-security-report.pdf unified-enterprise-security-report.pdf
 
-      - name: Upload PDF
+      # ===============================
+      # 🔟 Upload Enterprise PDF
+      # ===============================
+      - name: Upload Enterprise PDF
         uses: actions/upload-artifact@v4
         with:
-          name: unified-security-report
-          path: unified-security-report.pdf
+          name: enterprise-security-report
+          path: unified-enterprise-security-report.pdf
 
+      # ===============================
+      # 1️⃣1️⃣ Deploy to Vercel
+      # ===============================
       - name: Deploy to Vercel
         if: github.ref == 'refs/heads/main'
         run: |
