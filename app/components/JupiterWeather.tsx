@@ -195,7 +195,7 @@ export default function JupiterWeather() {
             <div className="text-center">
               <h4 className="text-lg font-semibold text-red-200 mb-3">No Seasons</h4>
               <p className="text-gray-300">
-                Jupiter\'s minimal axial tilt (3.1°) means it has no significant seasonal variations like Earth.
+                Jupiter's minimal axial tilt (3.1°) means it has no significant seasonal variations like Earth.
               </p>
             </div>
             <div className="text-center">
