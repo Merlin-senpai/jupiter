@@ -30,14 +30,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 4️⃣ Run npm audit (JSON for AI + HTML for printing)
+      # 4️⃣ Install system tools (jq)
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # 5️⃣ Generate npm Audit Reports (JSON + HTML)
       - name: Generate npm Audit Reports
         run: |
-          npm install -g npm-audit-html jq
+          npm install -g npm-audit-html
           npm audit --json > audit.json || true
           npm-audit-html -i audit.json -o security-report.html
 
-      # 5️⃣ Install and Run Snyk
+      # 6️⃣ Install and Run Snyk
       - name: Install Snyk
         run: npm install -g snyk
 
@@ -47,12 +51,12 @@ jobs:
         run: |
           snyk test --json > snyk-report.json || true
 
-      # 6️⃣ Combine Security Reports for AI
+      # 7️⃣ Combine Security Reports for AI (Fixed jq)
       - name: Prepare Combined Security Data
         run: |
           jq -s '{npm_audit: .[0], snyk: .[1]}' audit.json snyk-report.json > combined-security.json
 
-      # 7️⃣ 🤖 AI Security Analysis (Markdown formatted)
+      # 8️⃣ 🤖 AI Security Analysis (Markdown formatted)
       - name: Run AI Security Analysis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -67,7 +71,7 @@ jobs:
             "messages": [
               {
                 "role": "system",
-                "content": "You are a senior DevSecOps security analyst. Analyze the provided security scan results and produce a professional Markdown formatted security report. Use clear sections with headings (##), bullet points, and short explanations. Include: 1) Executive Summary, 2) Overall Risk Level (Low/Medium/High/Critical), 3) Top Vulnerabilities, 4) Remediation Plan, 5) Deployment Recommendation. Do NOT return JSON."
+                "content": "You are a senior DevSecOps security analyst. Analyze the provided security scan results and produce a professional Markdown formatted security report. Use headings (##), bullet points, and concise explanations. Include: Executive Summary, Overall Risk Level, Top Vulnerabilities, Remediation Plan, and Deployment Recommendation. Do NOT return JSON."
               },
               {
                 "role": "user",
@@ -82,14 +86,14 @@ jobs:
           echo "$RESPONSE" > ai-response.json
           jq -r '.choices[0].message.content' ai-response.json > ai-report.md
 
-      # 8️⃣ Publish AI Report to GitHub Summary (Clean Markdown)
+      # 9️⃣ Publish AI Security Report
       - name: Publish AI Security Report
         run: |
           echo "## 🤖 AI Security Analysis Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cat ai-report.md >> $GITHUB_STEP_SUMMARY
 
-      # 9️⃣ Upload Printable & AI Reports
+      # 🔟 Upload Reports
       - name: Upload Security Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -100,7 +104,7 @@ jobs:
             snyk-report.json
             ai-report.md
 
-      # 🔟 Deploy to Vercel (Only on main branch)
+      # 1️⃣1️⃣ Deploy to Vercel
       - name: 🚀 Deploy to Vercel
         if: github.ref == 'refs/heads/main'
         run: |
