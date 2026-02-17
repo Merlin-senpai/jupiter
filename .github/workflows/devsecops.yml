@@ -10,9 +10,9 @@ on:
 
 jobs:
   security-and-deploy:
-    name: Security Scan + AI + Enterprise PDF + Deploy
+    name: Security Scan + AI + Snyk + Enterprise PDF + Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 60
 
     steps:
       # 1️⃣ Checkout
@@ -37,7 +37,7 @@ jobs:
           sudo apt-get install -y jq wkhtmltopdf poppler-utils
 
       # ===============================
-      # 5️⃣ Generate npm Audit Report
+      # 5️⃣ npm Audit
       # ===============================
       - name: Generate npm Audit Reports
         run: |
@@ -47,14 +47,52 @@ jobs:
           wkhtmltopdf --enable-local-file-access npm-audit-report.html npm-audit-report.pdf
 
       # ===============================
-      # 6️⃣ Combine Reports for AI
+      # 6️⃣ Snyk Scan
+      # ===============================
+      - name: Install Snyk
+        run: npm install -g snyk
+
+      - name: Run Snyk Test
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk test --json > snyk-report.json || true
+
+      - name: Convert Snyk JSON to PDF
+        run: |
+          cat <<EOF > snyk-report.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>Snyk Security Report</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+              h1 { color: #1f2937; border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+              h2 { color: #111827; margin-top: 25px; }
+              .critical { color: #b91c1c; font-weight: bold; }
+              .high { color: #dc2626; font-weight: bold; }
+              .medium { color: #d97706; font-weight: bold; }
+              .low { color: #059669; font-weight: bold; }
+              ul { margin-left: 20px; }
+            </style>
+          </head>
+          <body>
+            <h1>Snyk Security Report</h1>
+            <ul>
+EOF
+          cat snyk-report.json | jq -r '.vulnerabilities[]? | "<li class=\"\(.severity)\">Package: \(.packageName), Severity: \(.severity), CVE: \(.identifiers.CVE[0] // "N/A"), Path: \(.from | join(" → "))</li>"' >> snyk-report.html
+          echo "</ul></body></html>" >> snyk-report.html
+          wkhtmltopdf --enable-local-file-access snyk-report.html snyk-report.pdf
+
+      # ===============================
+      # 7️⃣ Prepare Combined Security Data for AI
       # ===============================
       - name: Prepare Combined Security Data
         run: |
-          jq -s '{npm_audit: .[0]}' audit.json > combined-security.json
+          jq -s '{npm_audit: .[0], snyk: .[1]}' audit.json snyk-report.json > combined-security.json
 
       # ===============================
-      # 7️⃣ Run AI Security Analysis
+      # 8️⃣ Run AI Security Analysis
       # ===============================
       - name: Run AI Security Analysis
         env:
@@ -81,12 +119,11 @@ jobs:
           }
           EOF
           )
-
           echo "$RESPONSE" > ai-response.json
           jq -r '.choices[0].message.content' ai-response.json > ai-body.html
 
       # ===============================
-      # 8️⃣ Build Enterprise-Grade HTML Report
+      # 9️⃣ Build Enterprise-Grade HTML Report
       # ===============================
       - name: Build Enterprise HTML Report
         run: |
@@ -122,18 +159,17 @@ jobs:
           </body>
           </html>
           EOF
-
           wkhtmltopdf --enable-local-file-access ai-security-report.html ai-security-report.pdf
 
       # ===============================
-      # 9️⃣ Merge PDFs into Enterprise PDF with TOC
+      # 🔟 Merge PDFs into Enterprise PDF
       # ===============================
       - name: Merge PDFs
         run: |
-          pdfunite cover.pdf npm-audit-report.pdf ai-security-report.pdf unified-enterprise-security-report.pdf
+          pdfunite cover.pdf npm-audit-report.pdf snyk-report.pdf ai-security-report.pdf unified-enterprise-security-report.pdf
 
       # ===============================
-      # 🔟 Upload Enterprise PDF
+      # 1️⃣1️⃣ Upload Enterprise PDF
       # ===============================
       - name: Upload Enterprise PDF
         uses: actions/upload-artifact@v4
@@ -142,7 +178,7 @@ jobs:
           path: unified-enterprise-security-report.pdf
 
       # ===============================
-      # 1️⃣1️⃣ Deploy to Vercel
+      # 1️⃣2️⃣ Deploy to Vercel
       # ===============================
       - name: Deploy to Vercel
         if: github.ref == 'refs/heads/main'
